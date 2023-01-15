@@ -17,8 +17,9 @@ use rand::Rng;
 use std::fs;
 use std::io;
 use std::io::Write;
+use std::collections::HashSet;
 
-const NUM_INCORRECT_GUESSES: u32 = 5;
+const NUM_INCORRECT_GUESSES: u32 = 20;
 const WORDS_PATH: &str = "words.txt";
 
 fn pick_a_random_word() -> String {
@@ -28,13 +29,74 @@ fn pick_a_random_word() -> String {
 }
 
 fn main() {
+    println!("Welcome to CS110L Hangman!");
     let secret_word = pick_a_random_word();
     // Note: given what you know about Rust so far, it's easier to pull characters out of a
     // vector than it is to pull them out of a string. You can get the ith character of
     // secret_word by doing secret_word_chars[i].
     let secret_word_chars: Vec<char> = secret_word.chars().collect();
-    // Uncomment for debugging:
-    // println!("random word: {}", secret_word);
+    let mut guess_words: Vec<char> = Vec::new();
+    let mut hits: HashSet<usize> = HashSet::new();
+    let mut miss_hit = 0;
 
-    // Your code here! :)
+    while hits.len() < secret_word_chars.len() && miss_hit < NUM_INCORRECT_GUESSES {
+        print_current(&secret_word_chars, &hits);
+        println!("You have guessed the following letters: {}", &guess_words.iter().collect::<String>());
+        println!("You have {} guesses left", NUM_INCORRECT_GUESSES - miss_hit);
+        let word = read_a_word().unwrap();
+        guess_words.push(word);
+        let is_hit = set_hits(&word, &secret_word_chars, &mut hits);
+        if !is_hit {
+            miss_hit = miss_hit + 1;
+        }
+        println!("");
+    }
+
+    if miss_hit == NUM_INCORRECT_GUESSES {
+        println!("Sorry, you ran out of guesses!")
+    } else {
+        println!("Guess right: {}", secret_word);
+    }
+}
+
+fn set_hits(word: &char, secret: &Vec<char>, hits: &mut HashSet<usize>) -> bool {
+    let mut is_hit = false;
+    for (index, item) in secret.iter().enumerate() {
+        if hits.contains(&index) {
+            continue;
+        }
+        if word == item {
+            hits.insert(index);
+            is_hit = true;
+            break;
+        }
+    }
+
+    if !is_hit {
+        println!("Sorry, that letter is not in the word");
+    }
+    is_hit
+}
+
+fn print_current(secret: &Vec<char>, guess: &HashSet<usize>) -> () {
+    let data = secret.iter().enumerate().map(|(i, c) | {
+        match guess.get(&i) {
+            Some(_) => *c,
+            None => '-',
+        }
+    }).collect::<Vec<char>>();
+    println!("The word so far is {:?}", data.into_iter().collect::<String>());
+}
+
+fn read_a_word() -> Option<char> {
+    print!("Please guess a letter: ");
+    // Make sure the prompt from the previous line gets displayed:
+    io::stdout()
+        .flush()
+        .expect("Error flushing stdout.");
+    let mut guess = String::new();
+    io::stdin()
+        .read_line(&mut guess)
+        .expect("Error reading line.");
+    guess.chars().nth(0)
 }

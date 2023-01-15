@@ -2,7 +2,7 @@
 pub struct Grid {
     num_rows: usize,
     num_cols: usize,
-    elems: Vec<usize>,
+    elms: Vec<usize>,
 }
 
 impl Grid {
@@ -14,7 +14,7 @@ impl Grid {
             // This syntax uses the vec! macro to create a vector of zeros, initialized to a
             // specific length
             // https://stackoverflow.com/a/29530932
-            elems: vec![0; num_rows * num_cols],
+            elms: vec![0; num_rows * num_cols],
         }
     }
 
@@ -32,15 +32,25 @@ impl Grid {
     /// https://docs.rs/array2d/0.2.1/array2d/struct.Array2D.html
     #[allow(unused)] // TODO: delete this line when you implement this function
     pub fn get(&self, row: usize, col: usize) -> Option<usize> {
-        unimplemented!();
-        // Be sure to delete the #[allow(unused)] line above
+        if row >= self.num_rows || col >= self.num_cols {
+            return None
+        }
+
+        match self.elms.get(row * self.num_cols + col) {
+            Some(v) => Some(*v),
+            None => None,
+        }
     }
 
     /// Sets the element at the specified location to the specified value. If the location is out
     /// of bounds, returns Err with an error message.
     #[allow(unused)] // TODO: delete this line when you implement this function
     pub fn set(&mut self, row: usize, col: usize, val: usize) -> Result<(), &'static str> {
-        unimplemented!();
+        if row >= self.num_rows || col >= self.num_cols {
+            return Err("Invalid location")
+        }
+        &self.elms.insert(row * self.num_cols + col, val);
+        Ok(())
         // Be sure to delete the #[allow(unused)] line above
     }
 
@@ -57,7 +67,7 @@ impl Grid {
 
     /// Resets all the elements to zero.
     pub fn clear(&mut self) {
-        for i in self.elems.iter_mut() {
+        for i in self.elms.iter_mut() {
             *i = 0;
         }
     }

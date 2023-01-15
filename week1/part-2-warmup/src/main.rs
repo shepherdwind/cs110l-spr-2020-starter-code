@@ -1,5 +1,4 @@
 /* The following exercises were borrowed from Will Crichton's CS 242 Rust lab. */
-
 use std::collections::HashSet;
 
 fn main() {
@@ -7,15 +6,26 @@ fn main() {
 }
 
 fn add_n(v: Vec<i32>, n: i32) -> Vec<i32> {
-    unimplemented!()
+    v.iter().map(|x| x + n).collect()
 }
 
 fn add_n_inplace(v: &mut Vec<i32>, n: i32) {
-    unimplemented!()
+    for item in v.iter_mut() {
+        *item += n;
+    }
 }
 
 fn dedup(v: &mut Vec<i32>) {
-    unimplemented!()
+    let mut tmp = HashSet::new();
+    let mut ret = Vec::new();
+    for item in v.iter() {
+        if tmp.contains(item) {
+            continue;
+        }
+        tmp.insert(*item);
+        ret.push(*item);
+    }
+    *v = ret;
 }
 
 #[cfg(test)]
