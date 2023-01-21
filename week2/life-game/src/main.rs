@@ -5,8 +5,8 @@ pub mod grid;
 pub mod stone;
 pub mod model;
 
-const ROWS: u32 = 15;
-const COLS: u32 = 10;
+const ROWS: u32 = 30;
+const COLS: u32 = 30;
 const SIZE: u32 = 20;
 const LINE_WIDTH: f32 = 0.06;
 const WIDTH: u32 = COLS * SIZE + 2 * MARGIN;
@@ -41,7 +41,7 @@ fn view(app: &App, model: &Model, frame: Frame) {
 
     draw.background().color(SNOW);
 
-    model.grid.walk(&|stone, _row, _col| {
+    model.grid.walk(Box::new(move |stone, _row, _col| {
         let cdraw = gdraw.x_y(stone.x, stone.y);
 
         let color = if stone.active {
@@ -57,18 +57,24 @@ fn view(app: &App, model: &Model, frame: Frame) {
             .w_h(1.0, 1.0)
             .x_y(0.0, 0.0)
             ;
-    });
+    }));
 
     draw.to_frame(app, &frame).unwrap();
 }
 
 fn key_pressed(_app: &App, model: &mut Model, key: Key) {
     match key {
-        Key::R => {
-            // model.random_seed = random_range(0, 1000000);
+        Key::N => {
+            model.next_status();
+        }
+        Key::C => {
+            model.clear();
         }
         Key::S => {
-            model.clear();
+            model.start();
+        }
+        Key::P => {
+            model.stop();
         }
         _other_key => {}
     }
