@@ -8,6 +8,7 @@ pub struct Model {
   y: f32,
   width: usize,
   click: bool,
+  pub step: usize,
   pub grid: Grid<Stone>,
   run_time: Option<SystemTime>,
 }
@@ -21,6 +22,7 @@ impl Model {
           grid,
           x: 0.0,
           y: 0.0,
+          step: 0,
           run_time: None,
           width,
           click: false,
@@ -69,6 +71,8 @@ impl Model {
       self.grid.walk_mut(&|stone, _, _| {
         stone.active = false;
       });
+      self.step = 0;
+      self.stop();
     }
 
     pub fn start(&mut self) {
@@ -81,6 +85,7 @@ impl Model {
 
     pub fn next_status(&mut self) {
       let mut grid = Grid::<Stone>::new(self.grid.num_rows, self.grid.num_cols);
+      self.step += 1;
 
       grid.walk_mut(&|stone, row, col| {
         let mut live_num = 0;
