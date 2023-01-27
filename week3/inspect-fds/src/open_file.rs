@@ -134,10 +134,22 @@ impl OpenFile {
     /// program and we don't need to do fine-grained error handling, so returning Option is a
     /// simple way to indicate that "hey, we weren't able to get the necessary information"
     /// without making a big deal of it.)
-    #[allow(unused)] // TODO: delete this line for Milestone 4
     pub fn from_fd(pid: usize, fd: usize) -> Option<OpenFile> {
-        // TODO: implement for Milestone 4
-        unimplemented!();
+        let dir = format!("/proc/{}/fd/{}", pid, fd);
+        let link = fs::read_link(dir).ok()?;
+        let path = format!("/proc/{}/fdinfo/{}", pid, fd);
+        let file = fs::read_to_string(path);
+
+        if let Err(err) = file {
+            println!("{}", err);
+            return None;
+        }
+
+        let content = file.ok()?;
+        let name = OpenFile::path_to_name(link.to_str()?);
+        let cursor = OpenFile::parse_cursor(&content)?;
+        let access_mode = OpenFile::parse_access_mode(&content)?;
+        Some(OpenFile { name, cursor, access_mode })
     }
 
     /// This function returns the OpenFile's name with ANSI escape codes included to colorize
@@ -171,7 +183,7 @@ mod test {
     }
 
     #[test]
-    fn test_openfile_from_fd() {
+    fn test_openfile_from_fd_ok() {
         let mut test_subprocess = start_c_program("./multi_pipe_test");
         let process = ps_utils::get_target("multi_pipe_test").unwrap().unwrap();
         // Get file descriptor 0, which should point to the terminal
