@@ -3,6 +3,8 @@ use nix::sys::signal;
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use std::process::Child;
+use std::os::unix::process::CommandExt;
+use std::process::Command;
 
 pub enum Status {
     /// Indicates inferior stopped. Contains the signal that stopped the process, as well as the
@@ -34,12 +36,33 @@ impl Inferior {
     /// Attempts to start a new inferior process. Returns Some(Inferior) if successful, or None if
     /// an error is encountered.
     pub fn new(target: &str, args: &Vec<String>) -> Option<Inferior> {
-        // TODO: implement me!
+        let mut command = Command::new(target);
+        unsafe {
+            command.pre_exec::<_>(child_traceme);
+        }
         println!(
-            "Inferior::new not implemented! target={}, args={:?}",
+            "Inferior run! target={}, args={:?}",
             target, args
         );
-        None
+        let child = command.args(args).spawn().ok();
+
+        match child {
+            Some(c) => {
+                let infer = Inferior { child: c };
+                let wait = Inferior::wait(&infer, None).ok();
+                if wait.is_none() {
+                    return None;
+                }
+
+                if let Status::Stopped(sig, _) = wait.unwrap() {
+                    if sig == signal::Signal::SIGTRAP {
+                        return Some(infer);
+                    }
+                }
+                None
+            },
+            None => None
+        }
     }
 
     /// Returns the pid of this inferior.
@@ -47,6 +70,14 @@ impl Inferior {
         nix::unistd::Pid::from_raw(self.child.id() as i32)
     }
 
+    pub fn kill(&mut self) -> () {
+        let pid = self.pid().to_string();
+        let ret = self.child.kill();
+        match ret {
+            Ok(_) => println!("Killing running inferior (pid {})", pid),
+            Err(e) => println!("Kill fail: {:?}", e),
+        }
+    }
     /// Calls waitpid on this inferior and returns a Status to indicate the state of the process
     /// after the waitpid call.
     pub fn wait(&self, options: Option<WaitPidFlag>) -> Result<Status, nix::Error> {
