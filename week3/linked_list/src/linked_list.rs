@@ -99,7 +99,9 @@ where
 }
 
 impl<T> PartialEq for LinkedList<T>
-where T: PartialEq {
+where
+    T: PartialEq,
+{
     fn eq(&self, other: &Self) -> bool {
         let mut current = &self.head;
         let mut other_current = &other.head;
@@ -114,12 +116,12 @@ where T: PartialEq {
             };
 
             if !is_equal {
-                return  false;
+                return false;
             }
             current = &node.next;
         }
 
-        current.is_none() && other_current.is_none() 
+        current.is_none() && other_current.is_none()
     }
 }
 pub struct LinkedListIter<'a, T> {
@@ -133,7 +135,7 @@ impl<'a, T> Iterator for LinkedListIter<'a, T> {
             Some(node) => {
                 self.current = &node.next;
                 Some(&node.value)
-            },
+            }
             None => None,
         }
     }
@@ -143,7 +145,8 @@ impl<'a, T> IntoIterator for &'a LinkedList<T> {
     type Item = &'a T;
     type IntoIter = LinkedListIter<'a, T>;
     fn into_iter(self) -> LinkedListIter<'a, T> {
-        LinkedListIter { current: &self.head }
+        LinkedListIter {
+            current: &self.head,
+        }
     }
 }
-

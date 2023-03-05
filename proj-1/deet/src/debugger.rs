@@ -1,6 +1,8 @@
+use std::collections::HashMap;
+
 use crate::debugger_command::DebuggerCommand;
 use crate::dwarf_data::DwarfData;
-use crate::inferior::Inferior;
+use crate::inferior::{Inferior, Status};
 use nix::sys::ptrace;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -10,15 +12,31 @@ pub struct Debugger {
     history_path: String,
     readline: Editor<()>,
     inferior: Option<Inferior>,
-    dwarfData: DwarfData,
+    dwarf_data: DwarfData,
+    break_points: HashMap<usize, Breakpoint>,
+}
+
+#[derive(Clone)]
+pub struct Breakpoint {
+    pub addr: usize,
+    pub orig_byte: u8,
+}
+
+
+fn parse_address(addr: &str) -> Option<usize> {
+    let addr_without_0x = if addr.to_lowercase().starts_with("0x") {
+        &addr[2..]
+    } else {
+        &addr
+    };
+    usize::from_str_radix(addr_without_0x, 16).ok()
 }
 
 impl Debugger {
     /// Initializes the debugger.
     pub fn new(target: &str) -> Debugger {
-        // TODO (milestone 3): initialize the DwarfData
-
         let dwarf = DwarfData::from_file(target).unwrap();
+        dwarf.print();
 
         let history_path = format!("{}/.deet_history", std::env::var("HOME").unwrap());
         let mut readline = Editor::<()>::new();
@@ -30,30 +48,95 @@ impl Debugger {
             history_path,
             readline,
             inferior: None,
-            dwarfData: dwarf,
+            dwarf_data: dwarf,
+            break_points: HashMap::new(),
         }
     }
 
     pub fn run(&mut self) {
         loop {
             match self.get_next_command() {
-                DebuggerCommand::Run(args) => {
-                    if let Some(infer) = self.inferior.as_mut() {
-                        infer.kill();
-                    }
-                    if let Some(inferior) = Inferior::new(&self.target, &args) {
-                        self.inferior = Some(inferior);
-                        self.cont_command();
-                    } else {
-                        println!("Error starting subprocess");
-                    }
-                }
+                DebuggerCommand::Run(args) => self.run_command(args),
                 DebuggerCommand::Quit => {
                     return;
                 }
-                DebuggerCommand::Cont => self.cont_command(),
+                DebuggerCommand::Cont => {
+                    if let Err(err) = self.cont_command() {
+                        println!("continue command fail {}", err);
+                    }
+                },
                 DebuggerCommand::BackTrace => self.back_trace(),
+                DebuggerCommand::BreakPoint(pos) => self.break_point_command(pos),
             }
+        }
+    }
+
+    fn run_command(&mut self, args: Vec<String>) {
+        if let Some(infer) = self.inferior.as_mut() {
+            infer.kill();
+        }
+
+        if let Some(inferior) = Inferior::new(&self.target, &args, &mut self.break_points) {
+            self.inferior = Some(inferior);
+            self.cont_run();
+        } else {
+            println!("Error starting subprocess");
+        }
+    }
+
+    fn cont_command(&mut self) -> Result<(), nix::Error> {
+        if self.inferior.is_none() {
+            println!("no process in debugger");
+            return Ok(());
+        }
+        let inferior = self.inferior.as_mut().unwrap();
+        let pid = inferior.pid();
+        let mut registers = ptrace::getregs(pid)?;
+        let rip = registers.rip - 1;
+        let break_pointer = self.break_points.get(&(rip as usize));
+
+        if break_pointer.is_none() {
+            return Ok(());
+        }
+
+        let address = break_pointer.unwrap().addr;
+        let orig_byte = break_pointer.unwrap().orig_byte;
+
+        inferior.write_byte(address, orig_byte)?;
+
+        registers.rip = rip;
+        ptrace::setregs(pid, registers)?;
+
+        // step forward
+        ptrace::step(pid, None)?;
+        let status = inferior.wait(None)?;
+        if let Status::Exited(_) = status {
+            self.inferior = None;
+            return Ok(());
+        }
+
+        // wite back  debug command
+        inferior.write_byte(address, 0xcc)?;
+        self.cont_run();
+
+        Ok(())
+    }
+
+    fn break_point_command(&mut self, position: Option<String>) {
+        if position.is_none() {
+            println!("please input position");
+            return;
+        }
+        let str = position.unwrap();
+        if let Some(addr) = parse_address(&str) {
+            self.break_points.insert(addr, Breakpoint { addr, orig_byte: 0 });
+            println!(
+                "Set breakpoint {} at {}",
+                self.break_points.len() - 1,
+                &str[1..]
+            );
+        } else {
+            println!("parse address: {} fail", str);
         }
     }
 
@@ -63,42 +146,57 @@ impl Debugger {
             return;
         }
         let pid = self.inferior.as_ref().unwrap().pid();
-        let registers= ptrace::getregs(pid).unwrap();
+        let registers = ptrace::getregs(pid).unwrap();
         let mut instruction_ptr = registers.rip as usize;
         let mut base_ptr = registers.rbp as usize;
         loop {
-            let path = self.dwarfData.get_line_from_addr(instruction_ptr).unwrap();
-            let func = self.dwarfData.get_function_from_addr(instruction_ptr).unwrap();
+            let path = self.dwarf_data.get_line_from_addr(instruction_ptr).unwrap();
+            let func = self
+                .dwarf_data
+                .get_function_from_addr(instruction_ptr)
+                .unwrap();
             println!("{} ({}:{})", func, path.file, path.number);
             if func == "main" {
                 break;
             }
-            instruction_ptr = ptrace::read(pid, (base_ptr + 8) as ptrace::AddressType).unwrap() as usize;
+            instruction_ptr =
+                ptrace::read(pid, (base_ptr + 8) as ptrace::AddressType).unwrap() as usize;
             base_ptr = ptrace::read(pid, base_ptr as ptrace::AddressType).unwrap() as usize;
         }
     }
 
-    fn cont_command(&mut self) {
+    fn cont_run(&mut self) {
         if self.inferior.is_none() {
             println!("No process is running");
             return;
         }
         ptrace::cont(self.inferior.as_mut().unwrap().pid(), None).ok();
-        let status = self.inferior.as_mut().unwrap().wait(None).ok();
-        if status.is_none() {
-            println!("Child error, no status");
-            return;
-        }
+        match self.wait() {
+            Ok(ret) => println!("Child {}", ret),
+            Err(err) => println!("wait fail {}", err),
+        };
+    }
 
-        let ret = match status.unwrap() {
-            crate::inferior::Status::Stopped(sig, _) => format!("Stopped (status {})", sig.as_str()),
-            crate::inferior::Status::Exited(code) => {
+    fn wait(&mut self) -> Result<String, nix::Error> {
+        let status = self.inferior.as_mut().unwrap().wait(None)?;
+
+        let ret = match status {
+            Status::Stopped(sig, rip) => {
+                let path = self.dwarf_data.get_line_from_addr(rip).unwrap();
+                format!(
+                    "Stopped (status {})\nStopped at {}:{}",
+                    sig.as_str(),
+                    path.file,
+                    path.number
+                )
+            }
+            Status::Exited(code) => {
                 self.inferior = None;
                 format!("Exited (Status {})", code)
-            },
-            crate::inferior::Status::Signaled(n) => format!("Signal (Status {})", n.as_str()),
+            }
+            Status::Signaled(n) => format!("Signal (Status {})", n.as_str()),
         };
-        println!("Child {}", ret);
+        Ok(ret)
     }
 
     /// This function prompts the user to enter a command, and continues re-prompting until the user

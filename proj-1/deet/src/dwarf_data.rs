@@ -39,7 +39,7 @@ impl DwarfData {
             gimli::RunTimeEndian::Big
         };
         Ok(DwarfData {
-            files: gimli_wrapper::load_file(&object, endian)?,
+            files: gimli_wrapper::load_file(&object, endian, path)?,
             addr2line: Context::new(&object).or_else(|e| Err(gimli_wrapper::Error::from(e)))?,
         })
     }

@@ -16,7 +16,7 @@ use std::convert::TryInto;
 use std::fmt::Write;
 use std::{io, path};
 
-pub fn load_file(object: &object::File, endian: gimli::RunTimeEndian) -> Result<Vec<File>, Error> {
+pub fn load_file(object: &object::File, endian: gimli::RunTimeEndian, path: &str) -> Result<Vec<File>, Error> {
     // Load a section and return as `Cow<[u8]>`.
     let load_section = |id: gimli::SectionId| -> Result<borrow::Cow<[u8]>, gimli::Error> {
         Ok(object
@@ -62,10 +62,12 @@ pub fn load_file(object: &object::File, endian: gimli::RunTimeEndian) -> Result<
                         if let Ok(DebugValue::Str(name)) = get_attr_value(&attr, &unit, &dwarf) {
                             name
                         } else {
-                            "<unknown>".to_string()
+                            let mut name = path.to_string();
+                            name.push_str(".c");
+                            name
                         }
                     } else {
-                        "<unknown>".to_string()
+                        path.to_string()
                     };
                     compilation_units.push(File {
                         name,
