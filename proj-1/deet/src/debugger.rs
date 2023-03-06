@@ -58,6 +58,9 @@ impl Debugger {
             match self.get_next_command() {
                 DebuggerCommand::Run(args) => self.run_command(args),
                 DebuggerCommand::Quit => {
+                    if let Some(inferior) = self.inferior.as_mut() {
+                        inferior.kill();
+                    }
                     return;
                 }
                 DebuggerCommand::Cont => {
@@ -96,6 +99,7 @@ impl Debugger {
         let break_pointer = self.break_points.get(&(rip as usize));
 
         if break_pointer.is_none() {
+            self.cont_run();
             return Ok(());
         }
 
@@ -128,16 +132,35 @@ impl Debugger {
             return;
         }
         let str = position.unwrap();
-        if let Some(addr) = parse_address(&str) {
+        if let Some(addr) = self.parse_address(&str) {
             self.break_points.insert(addr, Breakpoint { addr, orig_byte: 0 });
             println!(
                 "Set breakpoint {} at {}",
                 self.break_points.len() - 1,
-                &str[1..]
+                addr
             );
         } else {
             println!("parse address: {} fail", str);
         }
+    }
+
+    fn parse_address(&self, address: &str) -> Option<usize> {
+        parse_address(address);
+        if address.starts_with("*") {
+            return parse_address(&address[1..]);
+        }
+
+        let mut file = self.target.to_string();
+        file.push_str(".c");
+        if let Some(addr) = self.dwarf_data.get_addr_for_function(Some(&file), address) {
+            return Some(addr);
+        }
+
+        let line = address.parse::<usize>();
+        if let Ok(num) = line {
+            return self.dwarf_data.get_addr_for_line(Some(&file), num);
+        }
+        None
     }
 
     fn back_trace(&mut self) {
@@ -182,12 +205,15 @@ impl Debugger {
 
         let ret = match status {
             Status::Stopped(sig, rip) => {
-                let path = self.dwarf_data.get_line_from_addr(rip).unwrap();
+                let (file, num) = match self.dwarf_data.get_line_from_addr(rip) {
+                    None => ("unknown".to_string(), 0 as usize),
+                    Some(path) => (path.file, path.number)
+                };
                 format!(
                     "Stopped (status {})\nStopped at {}:{}",
                     sig.as_str(),
-                    path.file,
-                    path.number
+                    file,
+                    num
                 )
             }
             Status::Exited(code) => {
