@@ -78,7 +78,7 @@ impl<T> Drop for LinkedList<T> {
 
 impl<T> Clone for LinkedList<T>
 where
-    T: Clone,
+    T: Clone
 {
     fn clone(&self) -> Self {
         let mut current = &self.head;
@@ -98,10 +98,7 @@ where
     }
 }
 
-impl<T> PartialEq for LinkedList<T>
-where
-    T: PartialEq,
-{
+impl<T: PartialEq> PartialEq for LinkedList<T> {
     fn eq(&self, other: &Self) -> bool {
         let mut current = &self.head;
         let mut other_current = &other.head;
@@ -124,6 +121,7 @@ where
         current.is_none() && other_current.is_none()
     }
 }
+
 pub struct LinkedListIter<'a, T> {
     current: &'a Option<Box<Node<T>>>,
 }
@@ -131,13 +129,9 @@ pub struct LinkedListIter<'a, T> {
 impl<'a, T> Iterator for LinkedListIter<'a, T> {
     type Item = &'a T;
     fn next(&mut self) -> Option<Self::Item> {
-        match self.current {
-            Some(node) => {
-                self.current = &node.next;
-                Some(&node.value)
-            }
-            None => None,
-        }
+        let node = self.current.as_ref()?;
+        self.current = &node.next;
+        Some(&node.value)
     }
 }
 

@@ -20,8 +20,14 @@ fn main() {
     println!("{}", clone.to_string()); // ToString impl for anything impl Display
     println!("is equal after: {}", list == clone);
 
+
+    let a = 1;
+    let b = a;
+    println!("a: {}, b: {}", a, b);
+    let item = &list;
     // If you implement iterator trait:
-    for val in &list {
+    for val in item {
        println!("{}", val);
     }
+    println!("list len: {}", item.get_size());
 }
