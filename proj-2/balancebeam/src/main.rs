@@ -1,9 +1,14 @@
 mod request;
 mod response;
 
+use std::sync::Arc;
+
 use clap::Parser;
 use rand::{Rng, SeedableRng};
-use tokio::{net::{TcpListener, TcpStream}, stream::{StreamExt}};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    stream::StreamExt,
+};
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
 /// provide a fancy way to automatically construct a command-line argument parser.
@@ -17,7 +22,12 @@ struct CmdOptions {
         help = "IP/port to bind to"
     )]
     bind: String,
-    #[arg(short, long, help = "Upstream host to forward requests to")]
+    #[arg(
+        short,
+        long,
+        help = "Upstream host to forward requests to",
+        default_value = "171.67.215.200:80"
+    )]
     upstream: Vec<String>,
     #[arg(
         long,
@@ -85,16 +95,19 @@ async fn main() {
     log::info!("Listening for requests on {}", options.bind);
 
     // Handle incoming connections
-    let state = ProxyState {
+    let state = Arc::new(ProxyState {
         upstream_addresses: options.upstream,
         active_health_check_interval: options.active_health_check_interval,
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
-    };
+    });
 
     while let Some(stream) = listener.incoming().next().await {
         if let Ok(stream) = stream {
-            handle_connection(stream, &state).await;
+            let s = state.clone();
+            tokio::spawn(async move {
+                handle_connection(stream, s).await;
+            });
         }
     }
 }
@@ -123,12 +136,12 @@ async fn send_response(client_conn: &mut TcpStream, response: &http::Response<Ve
     }
 }
 
-async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
+async fn handle_connection(mut client_conn: TcpStream, state: Arc<ProxyState>) {
     let client_ip = client_conn.peer_addr().unwrap().ip().to_string();
     log::info!("Connection received from {}", client_ip);
 
     // Open a connection to a random destination server
-    let mut upstream_conn = match connect_to_upstream(state).await {
+    let mut upstream_conn = match connect_to_upstream(state.as_ref()).await {
         Ok(stream) => stream,
         Err(_error) => {
             let response = response::make_http_error(http::StatusCode::BAD_GATEWAY);
@@ -194,7 +207,8 @@ async fn handle_connection(mut client_conn: TcpStream, state: &ProxyState) {
         log::debug!("Forwarded request to server");
 
         // Read the server's response
-        let response = match response::read_from_stream(&mut upstream_conn, request.method()).await {
+        let response: http::Response<Vec<u8>> = match response::read_from_stream(&mut upstream_conn, request.method()).await
+        {
             Ok(response) => response,
             Err(error) => {
                 log::error!("Error reading response from server: {:?}", error);
