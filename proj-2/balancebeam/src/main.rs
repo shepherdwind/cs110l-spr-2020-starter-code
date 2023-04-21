@@ -7,7 +7,7 @@ use clap::Parser;
 use rand::{Rng, SeedableRng};
 use tokio::{
     net::{TcpListener, TcpStream},
-    stream::StreamExt, sync::Mutex,
+    stream::StreamExt, sync::{RwLock},
 };
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
@@ -98,7 +98,7 @@ async fn main() {
     log::info!("Listening for requests on {}", options.bind);
 
     // Handle incoming connections
-    let state = Arc::new(Mutex::new(ProxyState {
+    let state = Arc::new(RwLock::new(ProxyState {
         active_health_check_interval: options.active_health_check_interval,
         active_health_check_path: options.active_health_check_path,
         max_requests_per_minute: options.max_requests_per_minute,
@@ -115,22 +115,29 @@ async fn main() {
     }
 }
 
-async fn connect_to_upstream(state: &Arc<Mutex<ProxyState>>) -> Result<TcpStream, std::io::Error> {
-    let mut rng = rand::rngs::StdRng::from_entropy();
-    let mut s = state.as_ref().lock().await;
+async fn connect_to_upstream(state: &Arc<RwLock<ProxyState>>) -> Result<TcpStream, std::io::Error> {
     loop {
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let s = state.read().await;
         let len = s.upstream_addresses.len();
         if len == 0 {
             break Err(io::Error::new(io::ErrorKind::Other, "no upstream can use"))
         }
+
+        println!("start connect server, list {:?}", s.upstream_addresses);
         let upstream_idx = rng.gen_range(0, len);
-        let upstream_ip = &s.upstream_addresses[upstream_idx];
+        let upstream_ip = &s.upstream_addresses[upstream_idx].to_owned();
+        // we must drop here
+        drop(s);
+
         match TcpStream::connect(upstream_ip).await {
             Ok(stream) => {
                 break Ok(stream);
             },
-            Err(_) => {
-                s.upstream_addresses.remove(upstream_idx);
+            Err(err) => {
+                println!("error happen {:?}, remove from config", err);
+                let r = &mut state.write().await;
+                r.upstream_addresses.remove(upstream_idx);
             },
         }
 
@@ -150,7 +157,7 @@ async fn send_response(client_conn: &mut TcpStream, response: &http::Response<Ve
     }
 }
 
-async fn handle_connection(mut client_conn: TcpStream, state: Arc<Mutex<ProxyState>>) {
+async fn handle_connection(mut client_conn: TcpStream, state: Arc<RwLock<ProxyState>>) {
     let client_ip = client_conn.peer_addr().unwrap().ip().to_string();
     log::info!("Connection received from {}", client_ip);
 
