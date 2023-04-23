@@ -1,14 +1,17 @@
 mod request;
 mod response;
+mod connection;
 
-use std::{sync::{Arc}, io};
+use std::{sync::{Arc}};
 
 use clap::Parser;
-use rand::{Rng, SeedableRng};
+use connection::ConnectionConfig;
 use tokio::{
     net::{TcpListener, TcpStream},
     stream::StreamExt, sync::{RwLock},
 };
+
+use crate::connection::{connect_to_upstream, health_check};
 
 /// Contains information parsed from the command-line invocation of balancebeam. The Clap macros
 /// provide a fancy way to automatically construct a command-line argument parser.
@@ -49,24 +52,6 @@ struct CmdOptions {
     max_requests_per_minute: usize,
 }
 
-/// Contains information about the state of balancebeam (e.g. what servers we are currently proxying
-/// to, what servers have failed, rate limiting counts, etc.)
-///
-/// You should add fields to this struct in later milestones.
-struct ProxyState {
-    /// How frequently we check whether upstream servers are alive (Milestone 4)
-    #[allow(dead_code)]
-    active_health_check_interval: usize,
-    /// Where we should send requests when doing active health checks (Milestone 4)
-    #[allow(dead_code)]
-    active_health_check_path: String,
-    /// Maximum number of requests an individual IP can make in a minute (Milestone 5)
-    #[allow(dead_code)]
-    max_requests_per_minute: usize,
-    /// Addresses of servers that we are proxying to
-    upstream_addresses: Vec<String>,
-}
-
 /// Addresses of servers that we are proxying to
 // type UpstreamAddress = Arc<Mutex<Vec<String>>>;
 
@@ -98,12 +83,17 @@ async fn main() {
     log::info!("Listening for requests on {}", options.bind);
 
     // Handle incoming connections
-    let state = Arc::new(RwLock::new(ProxyState {
-        active_health_check_interval: options.active_health_check_interval,
-        active_health_check_path: options.active_health_check_path,
-        max_requests_per_minute: options.max_requests_per_minute,
-        upstream_addresses: options.upstream,
-    }));
+    let state = Arc::new(RwLock::new(ConnectionConfig::new(
+        options.active_health_check_interval,
+        options.active_health_check_path,
+        options.max_requests_per_minute,
+        options.upstream,
+    )));
+
+    let config = state.clone();
+    tokio::spawn(async move {
+        health_check(config).await;
+    });
 
     while let Some(stream) = listener.incoming().next().await {
         if let Ok(stream) = stream {
@@ -112,35 +102,6 @@ async fn main() {
                 handle_connection(stream, s).await;
             });
         }
-    }
-}
-
-async fn connect_to_upstream(state: &Arc<RwLock<ProxyState>>) -> Result<TcpStream, std::io::Error> {
-    loop {
-        let mut rng = rand::rngs::StdRng::from_entropy();
-        let s = state.read().await;
-        let len = s.upstream_addresses.len();
-        if len == 0 {
-            break Err(io::Error::new(io::ErrorKind::Other, "no upstream can use"))
-        }
-
-        println!("start connect server, list {:?}", s.upstream_addresses);
-        let upstream_idx = rng.gen_range(0, len);
-        let upstream_ip = &s.upstream_addresses[upstream_idx].to_owned();
-        // we must drop here
-        drop(s);
-
-        match TcpStream::connect(upstream_ip).await {
-            Ok(stream) => {
-                break Ok(stream);
-            },
-            Err(err) => {
-                println!("error happen {:?}, remove from config", err);
-                let r = &mut state.write().await;
-                r.upstream_addresses.remove(upstream_idx);
-            },
-        }
-
     }
 }
 
@@ -157,7 +118,7 @@ async fn send_response(client_conn: &mut TcpStream, response: &http::Response<Ve
     }
 }
 
-async fn handle_connection(mut client_conn: TcpStream, state: Arc<RwLock<ProxyState>>) {
+async fn handle_connection(mut client_conn: TcpStream, state: Arc<RwLock<ConnectionConfig>>) {
     let client_ip = client_conn.peer_addr().unwrap().ip().to_string();
     log::info!("Connection received from {}", client_ip);
 
