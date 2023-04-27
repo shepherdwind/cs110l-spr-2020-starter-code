@@ -1,9 +1,16 @@
 use http::StatusCode;
 use rand::{Rng, SeedableRng};
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::{io, net::TcpStream, sync::RwLock, time};
 
 use crate::{request, response};
+struct RequestFrequency {
+    total: usize,
+    time_diff: u64,
+}
 
 pub struct ConnectionConfig {
     /// How frequently we check whether upstream servers are alive (Milestone 4)
@@ -18,7 +25,10 @@ pub struct ConnectionConfig {
     /// Addresses of servers that we are proxying to
     upstream_addresses: Vec<String>,
     success_addresses: Vec<String>,
+    request_frequency: RequestFrequency,
 }
+
+static mut PROGRAM_START_TIME: Option<SystemTime> = None;
 
 impl ConnectionConfig {
     pub fn new(
@@ -28,12 +38,20 @@ impl ConnectionConfig {
         upstream: Vec<String>,
     ) -> ConnectionConfig {
         let success_list = upstream.clone();
+        unsafe {
+            PROGRAM_START_TIME = Some(SystemTime::now());
+        }
+
         ConnectionConfig {
             active_health_check_interval,
             active_health_check_path,
             max_requests_per_minute,
             upstream_addresses: upstream,
             success_addresses: success_list,
+            request_frequency: RequestFrequency {
+                total: 0,
+                time_diff: 0,
+            },
         }
     }
 }
@@ -137,4 +155,36 @@ pub async fn connect_to_upstream(
             }
         }
     }
+}
+
+pub async fn check_frequency(config: &Arc<RwLock<ConnectionConfig>>) -> Option<()> {
+    let data = config.read().await;
+    // 0 mean no limit
+    if data.max_requests_per_minute == 0 {
+        return Some(());
+    }
+
+    let frequency = &data.request_frequency;
+
+    let current_diff = SystemTime::now().duration_since(unsafe { PROGRAM_START_TIME.unwrap() }).unwrap().as_secs();
+    let need_reset_window = current_diff - frequency.time_diff >= 60;
+    let total = frequency.total;
+
+    log::info!("start count {}, max {}", total, data.max_requests_per_minute);
+    if !need_reset_window && frequency.total >= data.max_requests_per_minute {
+        return None;
+    }
+    drop(data);
+    let mut write = config.write().await;
+    if need_reset_window {
+        log::info!("count need reset now {}", 1);
+        write.request_frequency = RequestFrequency {
+            total: 1,
+            time_diff: current_diff,
+        };
+    } else {
+        log::info!("count need add one {}", total + 1);
+        write.request_frequency.total = total + 1;
+    }
+    Some(())
 }

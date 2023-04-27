@@ -169,6 +169,12 @@ async fn handle_connection(mut client_conn: TcpStream, state: Arc<RwLock<Connect
             upstream_ip,
             request::format_request_line(&request)
         );
+        let frequency = connection::check_frequency(&state).await;
+        if frequency.is_none() {
+            let response = response::make_http_error(http::StatusCode::TOO_MANY_REQUESTS);
+            let _ = response::write_to_stream(&response, &mut client_conn).await;
+            continue;
+        }
 
         // Add X-Forwarded-For header so that the upstream server knows the client's IP address.
         // (We're the ones connecting directly to the upstream server, so without this header, the
